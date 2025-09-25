@@ -1,0 +1,296 @@
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+from scipy import stats
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+import warnings
+warnings.filterwarnings('ignore')
+
+class PFASLoadCalculator:
+    """
+    A comprehensive toolkit for quantifying PFAS loads in various waste streams
+    """
+    
+    def __init__(self):
+        # Default PFAS concentration ranges from literature (mg/kg or mg/L)
+        self.default_concentrations = {
+            'municipal_solid_waste': {'min': 0.1, 'max': 10, 'median': 1.5, 'unit': 'mg/kg'},
+            'sewage_sludge': {'min': 5, 'max': 50, 'median': 15, 'unit': 'mg/kg'},
+            'landfill_leachate': {'min': 0.01, 'max': 100, 'median': 5, 'unit': 'μg/L'},
+            'industrial_waste': {'min': 1, 'max': 100, 'median': 25, 'unit': 'mg/kg'},
+            'textile_waste': {'min': 2, 'max': 30, 'median': 8, 'unit': 'mg/kg'},
+            'food_packaging_waste': {'min': 0.5, 'max': 15, 'median': 4, 'unit': 'mg/kg'}
+        }
+        
+        # Climate stress multipliers for emission scenarios
+        self.climate_multipliers = {
+            'normal': 1.0,
+            'flooding': 10.0,
+            'storm': 5.0,
+            'heat_wave': 3.0,
+            'drought': 0.8,
+            'sea_level_rise': 2.5
+        }
+    
+    def calculate_pfas_load(self, waste_stream, mass_tons, concentration_mgkg=None, 
+                           uncertainty_factor=0.3, monte_carlo_runs=1000):
+        """
+        Calculate PFAS load in a waste stream with uncertainty quantification
+        
+        Parameters:
+        - waste_stream: type of waste stream
+        - mass_tons: mass of waste in metric tons
+        - concentration_mgkg: PFAS concentration in mg/kg (if None, uses default)
+        - uncertainty_factor: relative uncertainty (default 30%)
+        - monte_carlo_runs: number of Monte Carlo simulations
+        """
+        
+        if concentration_mgkg is None:
+            conc_data = self.default_concentrations.get(waste_stream, 
+                                                       self.default_concentrations['municipal_solid_waste'])
+            concentration_mgkg = conc_data['median']
+        
+        # Monte Carlo simulation for uncertainty
+        conc_distribution = np.random.lognormal(
+            np.log(concentration_mgkg), 
+            uncertainty_factor, 
+            monte_carlo_runs
+        )
+        
+        mass_distribution = np.random.normal(mass_tons, mass_tons * 0.1, monte_carlo_runs)
+        mass_distribution = np.maximum(mass_distribution, 0)  # Ensure positive values
+        
+        # Calculate load distribution (kg PFAS)
+        load_distribution = (conc_distribution * mass_distribution * 1000) / 1000  # Convert to kg
+        
+        results = {
+            'mean_load_kg': np.mean(load_distribution),
+            'median_load_kg': np.median(load_distribution),
+            'p5_load_kg': np.percentile(load_distribution, 5),
+            'p95_load_kg': np.percentile(load_distribution, 95),
+            'std_load_kg': np.std(load_distribution),
+            'waste_stream': waste_stream,
+            'input_mass_tons': mass_tons,
+            'concentration_mgkg': concentration_mgkg,
+            'load_distribution': load_distribution
+        }
+        
+        return results
+    
+    def calculate_climate_adjusted_emissions(self, base_load_kg, climate_scenario):
+        """
+        Calculate PFAS emissions under different climate scenarios
+        """
+        multiplier = self.climate_multipliers.get(climate_scenario, 1.0)
+        adjusted_load = base_load_kg * multiplier
+        
+        return {
+            'base_load_kg': base_load_kg,
+            'climate_scenario': climate_scenario,
+            'multiplier': multiplier,
+            'adjusted_emission_kg': adjusted_load,
+            'additional_emission_kg': adjusted_load - base_load_kg
+        }
+    
+    def process_waste_inventory(self, inventory_df):
+        """
+        Process a waste inventory dataframe to calculate total PFAS loads
+        
+        Expected columns: waste_stream, mass_tons, concentration_mgkg (optional)
+        """
+        results = []
+        
+        for idx, row in inventory_df.iterrows():
+            load_result = self.calculate_pfas_load(
+                waste_stream=row['waste_stream'],
+                mass_tons=row['mass_tons'],
+                concentration_mgkg=row.get('concentration_mgkg', None)
+            )
+            results.append(load_result)
+        
+        # Create summary dataframe
+        summary_df = pd.DataFrame([
+            {
+                'waste_stream': r['waste_stream'],
+                'mass_tons': r['input_mass_tons'],
+                'mean_load_kg': r['mean_load_kg'],
+                'median_load_kg': r['median_load_kg'],
+                'p5_load_kg': r['p5_load_kg'],
+                'p95_load_kg': r['p95_load_kg'],
+                'concentration_mgkg': r['concentration_mgkg']
+            } for r in results
+        ])
+        
+        return summary_df, results
+    
+    def create_sankey_data(self, summary_df, scenarios=['normal', 'flooding', 'storm']):
+        """
+        Prepare data for Sankey diagram showing PFAS flows
+        """
+        sankey_data = {
+            'sources': [],
+            'targets': [],
+            'values': [],
+            'labels': []
+        }
+        
+        # Add waste stream nodes
+        waste_streams = summary_df['waste_stream'].tolist()
+        sankey_data['labels'].extend(waste_streams)
+        
+        # Add scenario nodes
+        scenario_labels = [f"Emissions_{scenario}" for scenario in scenarios]
+        sankey_data['labels'].extend(scenario_labels)
+        
+        # Create flows
+        for i, (_, row) in enumerate(summary_df.iterrows()):
+            base_load = row['mean_load_kg']
+            
+            for j, scenario in enumerate(scenarios):
+                climate_result = self.calculate_climate_adjusted_emissions(base_load, scenario)
+                
+                sankey_data['sources'].append(i)  # Source waste stream
+                sankey_data['targets'].append(len(waste_streams) + j)  # Target scenario
+                sankey_data['values'].append(climate_result['adjusted_emission_kg'])
+        
+        return sankey_data
+    
+    def plot_load_distribution(self, load_results, figsize=(12, 8)):
+        """
+        Create comprehensive visualization of PFAS load distributions
+        """
+        fig, axes = plt.subplots(2, 2, figsize=figsize)
+        fig.suptitle('PFAS Load Analysis Results', fontsize=16, fontweight='bold')
+        
+        # Extract data for plotting
+        waste_streams = [r['waste_stream'] for r in load_results]
+        mean_loads = [r['mean_load_kg'] for r in load_results]
+        p5_loads = [r['p5_load_kg'] for r in load_results]
+        p95_loads = [r['p95_load_kg'] for r in load_results]
+        
+        # 1. Bar chart with error bars
+        axes[0,0].bar(range(len(waste_streams)), mean_loads, 
+                     yerr=[np.array(mean_loads) - np.array(p5_loads),
+                           np.array(p95_loads) - np.array(mean_loads)],
+                     capsize=5, alpha=0.7)
+        axes[0,0].set_title('Mean PFAS Loads by Waste Stream')
+        axes[0,0].set_ylabel('PFAS Load (kg)')
+        axes[0,0].set_xticks(range(len(waste_streams)))
+        axes[0,0].set_xticklabels([ws.replace('_', ' ').title() for ws in waste_streams], 
+                                 rotation=45, ha='right')
+        
+        # 2. Distribution plot for first waste stream
+        if load_results:
+            first_dist = load_results[0]['load_distribution']
+            axes[0,1].hist(first_dist, bins=50, alpha=0.7, density=True)
+            axes[0,1].axvline(np.mean(first_dist), color='red', linestyle='--', 
+                             label=f'Mean: {np.mean(first_dist):.2f} kg')
+            axes[0,1].set_title(f'Load Distribution: {waste_streams[0].replace("_", " ").title()}')
+            axes[0,1].set_xlabel('PFAS Load (kg)')
+            axes[0,1].set_ylabel('Density')
+            axes[0,1].legend()
+        
+        # 3. Climate scenario comparison
+        scenarios = ['normal', 'flooding', 'storm', 'heat_wave']
+        if load_results:
+            base_load = mean_loads[0]  # Use first waste stream as example
+            climate_loads = []
+            for scenario in scenarios:
+                climate_result = self.calculate_climate_adjusted_emissions(base_load, scenario)
+                climate_loads.append(climate_result['adjusted_emission_kg'])
+            
+            axes[1,0].bar(scenarios, climate_loads, alpha=0.7, 
+                         color=['blue', 'red', 'orange', 'yellow'])
+            axes[1,0].set_title('Climate Scenario Impact on Emissions')
+            axes[1,0].set_ylabel('Adjusted Emission (kg)')
+            axes[1,0].set_xticklabels(scenarios, rotation=45, ha='right')
+        
+        # 4. Cumulative load chart
+        cumulative_loads = np.cumsum(mean_loads)
+        axes[1,1].plot(range(len(waste_streams)), cumulative_loads, marker='o')
+        axes[1,1].set_title('Cumulative PFAS Load')
+        axes[1,1].set_ylabel('Cumulative Load (kg)')
+        axes[1,1].set_xlabel('Waste Stream Index')
+        axes[1,1].grid(True, alpha=0.3)
+        
+        plt.tight_layout()
+        return fig
+    
+    def generate_report(self, summary_df, load_results):
+        """
+        Generate a comprehensive text report
+        """
+        total_load = summary_df['mean_load_kg'].sum()
+        total_mass = summary_df['mass_tons'].sum()
+        
+        report = f"""
+PFAS LOAD QUANTIFICATION REPORT
+=====================================
+
+SUMMARY STATISTICS:
+- Total waste processed: {total_mass:,.1f} metric tons
+- Total PFAS load: {total_load:,.2f} kg
+- Average PFAS concentration: {(total_load/total_mass)*1000:,.3f} mg/kg
+
+WASTE STREAM BREAKDOWN:
+"""
+        
+        for _, row in summary_df.iterrows():
+            report += f"""
+{row['waste_stream'].replace('_', ' ').title()}:
+  - Mass: {row['mass_tons']:,.1f} tons
+  - PFAS Load: {row['mean_load_kg']:,.2f} kg (95% CI: {row['p5_load_kg']:,.2f} - {row['p95_load_kg']:,.2f})
+  - Concentration: {row['concentration_mgkg']:,.3f} mg/kg
+"""
+        
+        report += f"""
+CLIMATE SCENARIO PROJECTIONS:
+"""
+        
+        # Example climate calculations for total load
+        for scenario, multiplier in self.climate_multipliers.items():
+            adjusted_total = total_load * multiplier
+            report += f"  - {scenario.replace('_', ' ').title()}: {adjusted_total:,.2f} kg ({multiplier}x multiplier)\n"
+        
+        return report
+
+# Example usage and demonstration
+def demo_pfas_calculator():
+    """
+    Demonstration of the PFAS load calculator with sample data
+    """
+    
+    # Initialize calculator
+    calc = PFASLoadCalculator()
+    
+    # Create sample waste inventory
+    sample_data = pd.DataFrame({
+        'waste_stream': ['municipal_solid_waste', 'sewage_sludge', 'landfill_leachate', 
+                        'textile_waste', 'food_packaging_waste'],
+        'mass_tons': [10000, 500, 50, 200, 100],  # Mass in metric tons
+        # Optional: specify concentrations, otherwise defaults are used
+        'concentration_mgkg': [2.0, 20.0, None, 10.0, 5.0]  
+    })
+    
+    # Process the inventory
+    summary_df, load_results = calc.process_waste_inventory(sample_data)
+    
+    # Generate visualizations
+    fig = calc.plot_load_distribution(load_results)
+    plt.show()
+    
+    # Generate report
+    report = calc.generate_report(summary_df, load_results)
+    print(report)
+    
+    # Create Sankey data
+    sankey_data = calc.create_sankey_data(summary_df)
+    print("\nSankey diagram data prepared for visualization")
+    
+    return calc, summary_df, load_results
+
+if __name__ == "__main__":
+    # Run demonstration
+    calculator, results_df, detailed_results = demo_pfas_calculator()
