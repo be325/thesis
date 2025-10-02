@@ -1,0 +1,446 @@
+import pandas as pd
+import numpy as np
+import plotly.graph_objects as go
+import plotly.express as px
+from plotly.subplots import make_subplots
+import json
+
+class PFASMigrationMapper:
+    """
+    Visualize global PFAS migration patterns including trade flows, 
+    waste exports, and contamination spread
+    """
+    
+    def __init__(self):
+        # Country coordinates (lat, lon) for major players in PFAS trade
+        self.country_coords = {
+            'USA': (37.0902, -95.7129),
+            'China': (35.8617, 104.1954),
+            'Germany': (51.1657, 10.4515),
+            'Japan': (36.2048, 138.2529),
+            'South Korea': (35.9078, 127.7669),
+            'Netherlands': (52.1326, 5.2913),
+            'Belgium': (50.5039, 4.4699),
+            'UK': (55.3781, -3.4360),
+            'France': (46.2276, 2.2137),
+            'Italy': (41.8719, 12.5674),
+            'Canada': (56.1304, -106.3468),
+            'Australia': (-25.2744, 133.7751),
+            'India': (20.5937, 78.9629),
+            'Brazil': (-14.2350, -51.9253),
+            'Mexico': (23.6345, -102.5528),
+            'South Africa': (-30.5595, 22.9375),
+            'Indonesia': (-0.7893, 113.9213),
+            'Thailand': (15.8700, 100.9925),
+            'Vietnam': (14.0583, 108.2772),
+            'Poland': (51.9194, 19.1451),
+            'Spain': (40.4637, -3.7492),
+            'Sweden': (60.1282, 18.6435),
+            'Norway': (60.4720, 8.4689),
+            'Denmark': (56.2639, 9.5018),
+            'Switzerland': (46.8182, 8.2275),
+            'Turkey': (38.9637, 35.2433),
+            'UAE': (23.4241, 53.8478),
+            'Saudi Arabia': (23.8859, 45.0792),
+            'Nigeria': (9.0820, 8.6753),
+            'Kenya': (-0.0236, 37.9062),
+            'Malaysia': (4.2105, 101.9758),
+            'Singapore': (1.3521, 103.8198),
+            'Taiwan': (23.6978, 120.9605),
+            'Argentina': (-38.4161, -63.6167),
+            'Chile': (-35.6751, -71.5430)
+        }
+        
+    def create_sample_trade_data(self):
+        """
+        Create sample PFAS trade flow data
+        You should replace this with your actual data
+        """
+        trade_flows = [
+            # Format: (origin, destination, PFAS_tons, flow_type)
+            # Major exporters to importers
+            ('China', 'USA', 450, 'products'),
+            ('China', 'Germany', 320, 'products'),
+            ('China', 'UK', 180, 'products'),
+            ('USA', 'Mexico', 200, 'products'),
+            ('USA', 'Canada', 150, 'products'),
+            ('Germany', 'Poland', 120, 'products'),
+            ('Germany', 'France', 140, 'products'),
+            ('Japan', 'South Korea', 90, 'products'),
+            ('Japan', 'Thailand', 75, 'products'),
+            
+            # Waste exports (often from high-income to low-income countries)
+            ('USA', 'Vietnam', 85, 'waste'),
+            ('USA', 'Malaysia', 95, 'waste'),
+            ('Germany', 'Turkey', 70, 'waste'),
+            ('Netherlands', 'Indonesia', 60, 'waste'),
+            ('UK', 'India', 55, 'waste'),
+            ('Belgium', 'Nigeria', 45, 'waste'),
+            ('Canada', 'Philippines', 40, 'waste'),
+            ('Australia', 'Thailand', 50, 'waste'),
+            ('France', 'Vietnam', 38, 'waste'),
+            ('Italy', 'Egypt', 42, 'waste'),
+            
+            # Intra-regional trade
+            ('Netherlands', 'Belgium', 110, 'products'),
+            ('Belgium', 'France', 95, 'products'),
+            ('Sweden', 'Norway', 65, 'products'),
+            ('Spain', 'Portugal', 55, 'products'),
+            ('Singapore', 'Malaysia', 48, 'products'),
+            
+            # Recycling/treatment flows
+            ('Switzerland', 'Germany', 30, 'recycling'),
+            ('Denmark', 'Sweden', 25, 'recycling'),
+            ('Japan', 'South Korea', 35, 'recycling'),
+        ]
+        
+        df = pd.DataFrame(trade_flows, columns=['origin', 'destination', 'tons', 'flow_type'])
+        return df
+    
+    def create_country_inventory_data(self):
+        """
+        Create sample data for PFAS inventory by country (in tons)
+        """
+        inventory_data = {
+            # High-income countries (generally higher waste generation)
+            'USA': {'total_pfas': 15000, 'landfill': 8000, 'incineration': 4500, 'recycling': 1200, 'export': 1300},
+            'China': {'total_pfas': 18000, 'landfill': 12000, 'incineration': 4000, 'recycling': 800, 'export': 1200},
+            'Germany': {'total_pfas': 3500, 'landfill': 1200, 'incineration': 1800, 'recycling': 300, 'export': 200},
+            'Japan': {'total_pfas': 2800, 'landfill': 900, 'incineration': 1500, 'recycling': 300, 'export': 100},
+            'UK': {'total_pfas': 2200, 'landfill': 1100, 'incineration': 800, 'recycling': 200, 'export': 100},
+            'France': {'total_pfas': 2100, 'landfill': 1000, 'incineration': 900, 'recycling': 150, 'export': 50},
+            'Canada': {'total_pfas': 1800, 'landfill': 1000, 'incineration': 600, 'recycling': 150, 'export': 50},
+            'Australia': {'total_pfas': 1200, 'landfill': 700, 'incineration': 350, 'recycling': 100, 'export': 50},
+            
+            # Middle-income countries (mixed disposal methods)
+            'South Korea': {'total_pfas': 1500, 'landfill': 700, 'incineration': 600, 'recycling': 150, 'export': 50},
+            'India': {'total_pfas': 3500, 'landfill': 2800, 'incineration': 500, 'recycling': 100, 'export': 100},
+            'Brazil': {'total_pfas': 2500, 'landfill': 2000, 'incineration': 350, 'recycling': 100, 'export': 50},
+            'Mexico': {'total_pfas': 1800, 'landfill': 1400, 'incineration': 300, 'recycling': 50, 'export': 50},
+            'Thailand': {'total_pfas': 900, 'landfill': 650, 'incineration': 200, 'recycling': 30, 'export': 20},
+            'Malaysia': {'total_pfas': 800, 'landfill': 600, 'incineration': 150, 'recycling': 30, 'export': 20},
+            'Indonesia': {'total_pfas': 1200, 'landfill': 1000, 'incineration': 150, 'recycling': 30, 'export': 20},
+            'Vietnam': {'total_pfas': 700, 'landfill': 550, 'incineration': 120, 'recycling': 20, 'export': 10},
+            
+            # Lower-income countries (high landfill dependence)
+            'Nigeria': {'total_pfas': 600, 'landfill': 550, 'incineration': 40, 'recycling': 5, 'export': 5},
+            'Kenya': {'total_pfas': 300, 'landfill': 280, 'incineration': 15, 'recycling': 3, 'export': 2},
+        }
+        
+        df = pd.DataFrame.from_dict(inventory_data, orient='index').reset_index()
+        df.columns = ['country', 'total_pfas', 'landfill', 'incineration', 'recycling', 'export']
+        return df
+    
+    def create_interactive_flow_map(self, trade_df):
+        """
+        Create an interactive map showing PFAS trade flows with curved lines
+        """
+        fig = go.Figure()
+        
+        # Add base map
+        fig.add_trace(go.Scattergeo(
+            locationmode='country names',
+            lon=[coord[1] for coord in self.country_coords.values()],
+            lat=[coord[0] for coord in self.country_coords.values()],
+            mode='markers',
+            marker=dict(size=8, color='rgba(100, 100, 100, 0.3)', line_width=0),
+            text=list(self.country_coords.keys()),
+            hoverinfo='text',
+            showlegend=False
+        ))
+        
+        # Color mapping for flow types
+        flow_colors = {
+            'products': 'rgb(0, 100, 255)',      # Blue for product trade
+            'waste': 'rgb(255, 50, 50)',         # Red for waste exports
+            'recycling': 'rgb(50, 200, 50)'      # Green for recycling flows
+        }
+        
+        # Add flow lines
+        for flow_type in trade_df['flow_type'].unique():
+            flow_data = trade_df[trade_df['flow_type'] == flow_type]
+            
+            for _, row in flow_data.iterrows():
+                if row['origin'] in self.country_coords and row['destination'] in self.country_coords:
+                    origin_coords = self.country_coords[row['origin']]
+                    dest_coords = self.country_coords[row['destination']]
+                    
+                    # Calculate line width based on tonnage
+                    line_width = 1 + (row['tons'] / 100)
+                    
+                    fig.add_trace(go.Scattergeo(
+                        locationmode='ISO-3',
+                        lon=[origin_coords[1], dest_coords[1]],
+                        lat=[origin_coords[0], dest_coords[0]],
+                        mode='lines',
+                        line=dict(
+                            width=line_width,
+                            color=flow_colors.get(flow_type, 'gray')
+                        ),
+                        opacity=0.6,
+                        name=flow_type,
+                        hovertext=f"{row['origin']} → {row['destination']}<br>"
+                                 f"Flow: {row['tons']} tons<br>"
+                                 f"Type: {flow_type}",
+                        hoverinfo='text',
+                        showlegend=True
+                    ))
+        
+        fig.update_layout(
+            title={
+                'text': 'Global PFAS Migration Flows: Products, Waste, and Recycling',
+                'x': 0.5,
+                'xanchor': 'center',
+                'font': {'size': 20}
+            },
+            geo=dict(
+                projection_type='natural earth',
+                showland=True,
+                landcolor='rgb(243, 243, 243)',
+                coastlinecolor='rgb(204, 204, 204)',
+                showocean=True,
+                oceancolor='rgb(230, 245, 255)',
+                showcountries=True,
+                countrycolor='rgb(204, 204, 204)'
+            ),
+            height=700,
+            showlegend=True,
+            legend=dict(
+                x=0.02,
+                y=0.98,
+                bgcolor='rgba(255, 255, 255, 0.8)'
+            )
+        )
+        
+        return fig
+    
+    def create_choropleth_inventory(self, inventory_df):
+        """
+        Create a choropleth map showing PFAS inventory by country
+        """
+        # Prepare data with ISO codes (you may need to add a mapping)
+        iso_codes = {
+            'USA': 'USA', 'China': 'CHN', 'Germany': 'DEU', 'Japan': 'JPN',
+            'UK': 'GBR', 'France': 'FRA', 'Canada': 'CAN', 'Australia': 'AUS',
+            'South Korea': 'KOR', 'India': 'IND', 'Brazil': 'BRA', 'Mexico': 'MEX',
+            'Thailand': 'THA', 'Malaysia': 'MYS', 'Indonesia': 'IDN', 'Vietnam': 'VNM',
+            'Nigeria': 'NGA', 'Kenya': 'KEN'
+        }
+        
+        inventory_df['iso_alpha'] = inventory_df['country'].map(iso_codes)
+        
+        fig = px.choropleth(
+            inventory_df,
+            locations='iso_alpha',
+            color='total_pfas',
+            hover_name='country',
+            hover_data={
+                'iso_alpha': False,
+                'total_pfas': ':,.0f',
+                'landfill': ':,.0f',
+                'incineration': ':,.0f',
+                'recycling': ':,.0f'
+            },
+            color_continuous_scale='Reds',
+            labels={'total_pfas': 'Total PFAS (tons)'},
+            title='Global PFAS Inventory by Country'
+        )
+        
+        fig.update_layout(
+            geo=dict(
+                showframe=False,
+                showcoastlines=True,
+                projection_type='natural earth'
+            ),
+            height=600
+        )
+        
+        return fig
+    
+    def create_treatment_comparison_map(self, inventory_df):
+        """
+        Create a map comparing waste treatment methods by country
+        """
+        # Calculate treatment percentages
+        inventory_df['landfill_pct'] = (inventory_df['landfill'] / inventory_df['total_pfas'] * 100).round(1)
+        inventory_df['incineration_pct'] = (inventory_df['incineration'] / inventory_df['total_pfas'] * 100).round(1)
+        inventory_df['recycling_pct'] = (inventory_df['recycling'] / inventory_df['total_pfas'] * 100).round(1)
+        
+        # Create bubble map
+        fig = go.Figure()
+        
+        for _, row in inventory_df.iterrows():
+            if row['country'] in self.country_coords:
+                coords = self.country_coords[row['country']]
+                
+                # Size based on total PFAS
+                marker_size = 5 + (row['total_pfas'] / 200)
+                
+                # Color based on landfill percentage (red = high landfill dependence)
+                color_val = row['landfill_pct']
+                
+                fig.add_trace(go.Scattergeo(
+                    lon=[coords[1]],
+                    lat=[coords[0]],
+                    text=row['country'],
+                    mode='markers+text',
+                    marker=dict(
+                        size=marker_size,
+                        color=color_val,
+                        colorscale='RdYlGn_r',
+                        cmin=0,
+                        cmax=100,
+                        colorbar=dict(
+                            title='Landfill<br>Dependency (%)',
+                            x=1.05
+                        ),
+                        line=dict(width=1, color='white')
+                    ),
+                    textposition='top center',
+                    textfont=dict(size=8),
+                    hovertext=f"<b>{row['country']}</b><br>"
+                             f"Total PFAS: {row['total_pfas']:,.0f} tons<br>"
+                             f"Landfill: {row['landfill_pct']:.1f}%<br>"
+                             f"Incineration: {row['incineration_pct']:.1f}%<br>"
+                             f"Recycling: {row['recycling_pct']:.1f}%",
+                    hoverinfo='text',
+                    showlegend=False
+                ))
+        
+        fig.update_layout(
+            title='PFAS Waste Management: Landfill Dependency by Country',
+            geo=dict(
+                projection_type='natural earth',
+                showland=True,
+                landcolor='rgb(243, 243, 243)',
+                coastlinecolor='rgb(204, 204, 204)',
+                showcountries=True,
+                countrycolor='rgb(204, 204, 204)'
+            ),
+            height=700
+        )
+        
+        return fig
+    
+    def create_sankey_trade_diagram(self, trade_df):
+        """
+        Create a Sankey diagram showing PFAS flows between countries
+        """
+        # Prepare nodes
+        all_countries = list(set(trade_df['origin'].tolist() + trade_df['destination'].tolist()))
+        node_dict = {country: idx for idx, country in enumerate(all_countries)}
+        
+        # Prepare links
+        sources = [node_dict[row['origin']] for _, row in trade_df.iterrows()]
+        targets = [node_dict[row['destination']] for _, row in trade_df.iterrows()]
+        values = trade_df['tons'].tolist()
+        
+        # Color links by flow type
+        link_colors = []
+        for flow_type in trade_df['flow_type']:
+            if flow_type == 'products':
+                link_colors.append('rgba(0, 100, 255, 0.4)')
+            elif flow_type == 'waste':
+                link_colors.append('rgba(255, 50, 50, 0.4)')
+            else:
+                link_colors.append('rgba(50, 200, 50, 0.4)')
+        
+        fig = go.Figure(data=[go.Sankey(
+            node=dict(
+                pad=15,
+                thickness=20,
+                line=dict(color='black', width=0.5),
+                label=all_countries,
+                color='lightblue'
+            ),
+            link=dict(
+                source=sources,
+                target=targets,
+                value=values,
+                color=link_colors,
+                label=[f"{trade_df.iloc[i]['flow_type']}: {v} tons" 
+                       for i, v in enumerate(values)]
+            )
+        )])
+        
+        fig.update_layout(
+            title='PFAS Trade Flow Network (Sankey Diagram)',
+            font_size=10,
+            height=800
+        )
+        
+        return fig
+
+# Main execution function
+def create_pfas_migration_visualizations():
+    """
+    Generate all PFAS migration visualizations
+    """
+    mapper = PFASMigrationMapper()
+    
+    # Create sample data (replace with your actual data)
+    trade_df = mapper.create_sample_trade_data()
+    inventory_df = mapper.create_country_inventory_data()
+    
+    # Generate visualizations
+    print("Creating PFAS migration visualizations...")
+    
+    # 1. Flow map
+    flow_map = mapper.create_interactive_flow_map(trade_df)
+    flow_map.show()
+    
+    # 2. Inventory choropleth
+    inventory_map = mapper.create_choropleth_inventory(inventory_df)
+    inventory_map.show()
+    
+    # 3. Treatment comparison
+    treatment_map = mapper.create_treatment_comparison_map(inventory_df)
+    treatment_map.show()
+    
+    # 4. Sankey diagram
+    sankey = mapper.create_sankey_trade_diagram(trade_df)
+    sankey.show()
+    
+    print("\nAll visualizations created successfully!")
+    print("\nTo use your own data:")
+    print("1. Replace create_sample_trade_data() with your actual trade data")
+    print("2. Replace create_country_inventory_data() with your inventory data")
+    print("3. Format: trade_df needs columns: origin, destination, tons, flow_type")
+    print("4. Format: inventory_df needs columns: country, total_pfas, landfill, incineration, recycling, export")
+    
+    return mapper, trade_df, inventory_df
+
+# Example of loading your own data
+def load_custom_data(trade_file_path=None, inventory_file_path=None):
+    """
+    Load your own PFAS trade and inventory data
+    
+    Parameters:
+    - trade_file_path: CSV file with columns: origin, destination, tons, flow_type
+    - inventory_file_path: CSV file with columns: country, total_pfas, landfill, incineration, recycling, export
+    """
+    if trade_file_path:
+        trade_df = pd.read_csv(trade_file_path)
+        print(f"Loaded trade data: {len(trade_df)} flows")
+    else:
+        mapper = PFASMigrationMapper()
+        trade_df = mapper.create_sample_trade_data()
+        print("Using sample trade data")
+    
+    if inventory_file_path:
+        inventory_df = pd.read_csv(inventory_file_path)
+        print(f"Loaded inventory data: {len(inventory_df)} countries")
+    else:
+        mapper = PFASMigrationMapper()
+        inventory_df = mapper.create_country_inventory_data()
+        print("Using sample inventory data")
+    
+    return trade_df, inventory_df
+
+if __name__ == "__main__":
+    # Run with sample data
+    mapper, trade_data, inventory_data = create_pfas_migration_visualizations()
+    
+    # To use your own data files:
+    # trade_df, inventory_df = load_custom_data('your_trade_data.csv', 'your_inventory_data.csv')
+    # Then create visualizations with your data
