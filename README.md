@@ -1,6 +1,7 @@
 # thesis
 ## visualize migration of PFAS (including trande)
-[Visualize global PFAS migration patterns](https://github.com/be325/thesis/blob/main/Visualize%20global%20PFAS%20migration%20patterns)
+[Code](https://github.com/be325/thesis/blob/main/Visualize%20global%20PFAS%20migration%20patterns)
+[notebook](https://colab.research.google.com/drive/11Bh20MXTXdjnAVs19fu267PZS88qUgwC?usp=sharing）
 ## quantify PFAS loads in waste streams
 ## regional emission potentials
 ## alternative scenarios
