@@ -51,6 +51,33 @@ class PFASMigrationMapper:
             'Chile': (-35.6751, -71.5430)
         }
         
+        # Regional groupings
+        self.country_to_region = {
+            'USA': 'North America', 'Canada': 'North America', 'Mexico': 'North America',
+            'China': 'East Asia', 'Japan': 'East Asia', 'South Korea': 'East Asia', 'Taiwan': 'East Asia',
+            'Germany': 'Europe', 'UK': 'Europe', 'France': 'Europe', 'Italy': 'Europe',
+            'Netherlands': 'Europe', 'Belgium': 'Europe', 'Spain': 'Europe', 'Poland': 'Europe',
+            'Sweden': 'Europe', 'Norway': 'Europe', 'Denmark': 'Europe', 'Switzerland': 'Europe',
+            'India': 'South Asia', 'Thailand': 'Southeast Asia', 'Vietnam': 'Southeast Asia',
+            'Indonesia': 'Southeast Asia', 'Malaysia': 'Southeast Asia', 'Singapore': 'Southeast Asia',
+            'Australia': 'Oceania', 'Brazil': 'South America', 'Argentina': 'South America', 'Chile': 'South America',
+            'Turkey': 'Middle East', 'UAE': 'Middle East', 'Saudi Arabia': 'Middle East',
+            'Nigeria': 'Africa', 'Kenya': 'Africa', 'South Africa': 'Africa'
+        }
+        
+        # Regional center coordinates for visualization
+        self.region_coords = {
+            'North America': (45.0, -100.0),
+            'South America': (-15.0, -60.0),
+            'Europe': (50.0, 10.0),
+            'East Asia': (35.0, 115.0),
+            'South Asia': (20.0, 78.0),
+            'Southeast Asia': (10.0, 105.0),
+            'Middle East': (25.0, 45.0),
+            'Africa': (0.0, 20.0),
+            'Oceania': (-25.0, 135.0)
+        }
+        
     def create_sample_trade_data(self):
         """
         Create sample PFAS trade flow data
@@ -156,6 +183,9 @@ class PFASMigrationMapper:
             'recycling': 'rgb(50, 200, 50)'      # Green for recycling flows
         }
         
+        # Track which flow types we've added to legend
+        legend_added = set()
+        
         # Add flow lines
         for flow_type in trade_df['flow_type'].unique():
             flow_data = trade_df[trade_df['flow_type'] == flow_type]
@@ -168,6 +198,11 @@ class PFASMigrationMapper:
                     # Calculate line width based on tonnage
                     line_width = 1 + (row['tons'] / 100)
                     
+                    # Only show in legend once per flow type
+                    show_in_legend = flow_type not in legend_added
+                    if show_in_legend:
+                        legend_added.add(flow_type)
+                    
                     fig.add_trace(go.Scattergeo(
                         locationmode='ISO-3',
                         lon=[origin_coords[1], dest_coords[1]],
@@ -179,11 +214,12 @@ class PFASMigrationMapper:
                         ),
                         opacity=0.6,
                         name=flow_type,
+                        legendgroup=flow_type,
                         hovertext=f"{row['origin']} → {row['destination']}<br>"
                                  f"Flow: {row['tons']} tons<br>"
                                  f"Type: {flow_type}",
                         hoverinfo='text',
-                        showlegend=True
+                        showlegend=show_in_legend
                     ))
         
         fig.update_layout(
@@ -211,6 +247,196 @@ class PFASMigrationMapper:
                 bgcolor='rgba(255, 255, 255, 0.8)'
             )
         )
+        
+        return fig
+    
+    def create_regional_flow_map(self, trade_df):
+        """
+        Create a regional view showing PFAS flows aggregated by region
+        """
+        # Aggregate flows by region
+        trade_df['origin_region'] = trade_df['origin'].map(self.country_to_region)
+        trade_df['dest_region'] = trade_df['destination'].map(self.country_to_region)
+        
+        # Group by regions and sum tonnage
+        regional_flows = trade_df.groupby(['origin_region', 'dest_region', 'flow_type'])['tons'].sum().reset_index()
+        
+        # Remove intra-regional flows for clearer visualization
+        regional_flows = regional_flows[regional_flows['origin_region'] != regional_flows['dest_region']]
+        
+        fig = go.Figure()
+        
+        # Add regional nodes as larger markers
+        for region, coords in self.region_coords.items():
+            fig.add_trace(go.Scattergeo(
+                lon=[coords[1]],
+                lat=[coords[0]],
+                mode='markers+text',
+                marker=dict(size=25, color='rgba(100, 100, 255, 0.6)', 
+                           line=dict(width=2, color='white')),
+                text=region,
+                textposition='top center',
+                textfont=dict(size=12, color='black'),
+                hoverinfo='text',
+                hovertext=f"<b>{region}</b>",
+                showlegend=False
+            ))
+        
+        # Color mapping for flow types
+        flow_colors = {
+            'products': 'rgb(0, 100, 255)',
+            'waste': 'rgb(255, 50, 50)',
+            'recycling': 'rgb(50, 200, 50)'
+        }
+        
+        # Track legend
+        legend_added = set()
+        
+        # Add regional flow lines
+        for _, row in regional_flows.iterrows():
+            origin_coords = self.region_coords[row['origin_region']]
+            dest_coords = self.region_coords[row['dest_region']]
+            
+            # Line width based on tonnage
+            line_width = 2 + (row['tons'] / 50)
+            
+            show_in_legend = row['flow_type'] not in legend_added
+            if show_in_legend:
+                legend_added.add(row['flow_type'])
+            
+            fig.add_trace(go.Scattergeo(
+                lon=[origin_coords[1], dest_coords[1]],
+                lat=[origin_coords[0], dest_coords[0]],
+                mode='lines',
+                line=dict(
+                    width=line_width,
+                    color=flow_colors.get(row['flow_type'], 'gray')
+                ),
+                opacity=0.7,
+                name=row['flow_type'],
+                legendgroup=row['flow_type'],
+                hovertext=f"{row['origin_region']} → {row['dest_region']}<br>"
+                         f"Total: {row['tons']:,.0f} tons<br>"
+                         f"Type: {row['flow_type']}",
+                hoverinfo='text',
+                showlegend=show_in_legend
+            ))
+        
+        fig.update_layout(
+            title={
+                'text': 'Regional PFAS Flow Patterns',
+                'x': 0.5,
+                'xanchor': 'center',
+                'font': {'size': 20}
+            },
+            geo=dict(
+                projection_type='natural earth',
+                showland=True,
+                landcolor='rgb(243, 243, 243)',
+                coastlinecolor='rgb(204, 204, 204)',
+                showocean=True,
+                oceancolor='rgb(230, 245, 255)',
+                showcountries=True,
+                countrycolor='rgb(204, 204, 204)'
+            ),
+            height=700,
+            showlegend=True,
+            legend=dict(
+                x=0.02,
+                y=0.98,
+                bgcolor='rgba(255, 255, 255, 0.8)'
+            )
+        )
+        
+        return fig
+    
+    def create_regional_summary_chart(self, trade_df, inventory_df):
+        """
+        Create bar charts showing regional summaries
+        """
+        # Add regions to inventory
+        inventory_df['region'] = inventory_df['country'].map(self.country_to_region)
+        
+        # Aggregate by region
+        regional_inventory = inventory_df.groupby('region').agg({
+            'total_pfas': 'sum',
+            'landfill': 'sum',
+            'incineration': 'sum',
+            'recycling': 'sum'
+        }).reset_index()
+        
+        # Calculate percentages
+        regional_inventory['landfill_pct'] = (regional_inventory['landfill'] / 
+                                              regional_inventory['total_pfas'] * 100)
+        regional_inventory['incineration_pct'] = (regional_inventory['incineration'] / 
+                                                  regional_inventory['total_pfas'] * 100)
+        regional_inventory['recycling_pct'] = (regional_inventory['recycling'] / 
+                                               regional_inventory['total_pfas'] * 100)
+        
+        # Create subplots
+        fig = make_subplots(
+            rows=2, cols=2,
+            subplot_titles=('Total PFAS by Region', 'Landfill Dependency by Region',
+                          'Treatment Methods Distribution', 'Regional Trade Flows'),
+            specs=[[{'type': 'bar'}, {'type': 'bar'}],
+                   [{'type': 'bar'}, {'type': 'bar'}]]
+        )
+        
+        # 1. Total PFAS by region
+        fig.add_trace(
+            go.Bar(x=regional_inventory['region'], y=regional_inventory['total_pfas'],
+                   marker_color='steelblue', name='Total PFAS'),
+            row=1, col=1
+        )
+        
+        # 2. Landfill dependency
+        fig.add_trace(
+            go.Bar(x=regional_inventory['region'], y=regional_inventory['landfill_pct'],
+                   marker_color='crimson', name='Landfill %'),
+            row=1, col=2
+        )
+        
+        # 3. Treatment methods stacked
+        fig.add_trace(
+            go.Bar(x=regional_inventory['region'], y=regional_inventory['landfill_pct'],
+                   name='Landfill', marker_color='crimson'),
+            row=2, col=1
+        )
+        fig.add_trace(
+            go.Bar(x=regional_inventory['region'], y=regional_inventory['incineration_pct'],
+                   name='Incineration', marker_color='orange'),
+            row=2, col=1
+        )
+        fig.add_trace(
+            go.Bar(x=regional_inventory['region'], y=regional_inventory['recycling_pct'],
+                   name='Recycling', marker_color='green'),
+            row=2, col=1
+        )
+        
+        # 4. Regional trade flows
+        trade_df['origin_region'] = trade_df['origin'].map(self.country_to_region)
+        trade_df['dest_region'] = trade_df['destination'].map(self.country_to_region)
+        regional_trade = trade_df.groupby('origin_region')['tons'].sum().reset_index()
+        regional_trade.columns = ['region', 'export_tons']
+        
+        fig.add_trace(
+            go.Bar(x=regional_trade['region'], y=regional_trade['export_tons'],
+                   marker_color='teal', name='Exports'),
+            row=2, col=2
+        )
+        
+        fig.update_layout(
+            height=900,
+            showlegend=True,
+            title_text="Regional PFAS Management Overview",
+            barmode='stack'
+        )
+        
+        fig.update_xaxes(tickangle=45)
+        fig.update_yaxes(title_text="Tons", row=1, col=1)
+        fig.update_yaxes(title_text="Percentage (%)", row=1, col=2)
+        fig.update_yaxes(title_text="Percentage (%)", row=2, col=1)
+        fig.update_yaxes(title_text="Tons", row=2, col=2)
         
         return fig
     
@@ -269,43 +495,61 @@ class PFASMigrationMapper:
         # Create bubble map
         fig = go.Figure()
         
+        # Create a single trace with all markers
+        lons = []
+        lats = []
+        sizes = []
+        colors = []
+        texts = []
+        hovertexts = []
+        
         for _, row in inventory_df.iterrows():
             if row['country'] in self.country_coords:
                 coords = self.country_coords[row['country']]
                 
+                lons.append(coords[1])
+                lats.append(coords[0])
+                
                 # Size based on total PFAS
                 marker_size = 5 + (row['total_pfas'] / 200)
+                sizes.append(marker_size)
                 
-                # Color based on landfill percentage (red = high landfill dependence)
-                color_val = row['landfill_pct']
+                # Color based on landfill percentage
+                colors.append(row['landfill_pct'])
                 
-                fig.add_trace(go.Scattergeo(
-                    lon=[coords[1]],
-                    lat=[coords[0]],
-                    text=row['country'],
-                    mode='markers+text',
-                    marker=dict(
-                        size=marker_size,
-                        color=color_val,
-                        colorscale='RdYlGn_r',
-                        cmin=0,
-                        cmax=100,
-                        colorbar=dict(
-                            title='Landfill<br>Dependency (%)',
-                            x=1.05
-                        ),
-                        line=dict(width=1, color='white')
-                    ),
-                    textposition='top center',
-                    textfont=dict(size=8),
-                    hovertext=f"<b>{row['country']}</b><br>"
-                             f"Total PFAS: {row['total_pfas']:,.0f} tons<br>"
-                             f"Landfill: {row['landfill_pct']:.1f}%<br>"
-                             f"Incineration: {row['incineration_pct']:.1f}%<br>"
-                             f"Recycling: {row['recycling_pct']:.1f}%",
-                    hoverinfo='text',
-                    showlegend=False
-                ))
+                texts.append(row['country'])
+                
+                hovertexts.append(
+                    f"<b>{row['country']}</b><br>"
+                    f"Total PFAS: {row['total_pfas']:,.0f} tons<br>"
+                    f"Landfill: {row['landfill_pct']:.1f}%<br>"
+                    f"Incineration: {row['incineration_pct']:.1f}%<br>"
+                    f"Recycling: {row['recycling_pct']:.1f}%"
+                )
+        
+        fig.add_trace(go.Scattergeo(
+            lon=lons,
+            lat=lats,
+            text=texts,
+            mode='markers+text',
+            marker=dict(
+                size=sizes,
+                color=colors,
+                colorscale='Reds',
+                cmin=0,
+                cmax=100,
+                colorbar=dict(
+                    title='Landfill<br>Dependency (%)',
+                    x=1.05
+                ),
+                line=dict(width=1, color='white')
+            ),
+            textposition='top center',
+            textfont=dict(size=8),
+            hovertext=hovertexts,
+            hoverinfo='text',
+            showlegend=False
+        ))
         
         fig.update_layout(
             title='PFAS Waste Management: Landfill Dependency by Country',
@@ -385,23 +629,30 @@ def create_pfas_migration_visualizations():
     # Generate visualizations
     print("Creating PFAS migration visualizations...")
     
-    # 1. Flow map
+    # 1. Country-level flow map
     flow_map = mapper.create_interactive_flow_map(trade_df)
     flow_map.show()
     
-    # 2. Inventory choropleth
+    # 2. Regional flow map (NEW!)
+    regional_flow_map = mapper.create_regional_flow_map(trade_df)
+    regional_flow_map.show()
+    
+    # 3. Regional summary charts (NEW!)
+    regional_summary = mapper.create_regional_summary_chart(trade_df, inventory_df)
+    regional_summary.show()
+    
+    # 4. Inventory choropleth
     inventory_map = mapper.create_choropleth_inventory(inventory_df)
     inventory_map.show()
     
-    # 3. Treatment comparison
+    # 5. Treatment comparison
     treatment_map = mapper.create_treatment_comparison_map(inventory_df)
     treatment_map.show()
     
-    # 4. Sankey diagram
+    # 6. Sankey diagram
     sankey = mapper.create_sankey_trade_diagram(trade_df)
     sankey.show()
     
-    print("\nAll visualizations created successfully!")
     print("\nTo use your own data:")
     print("1. Replace create_sample_trade_data() with your actual trade data")
     print("2. Replace create_country_inventory_data() with your inventory data")
